@@ -1,0 +1,465 @@
+name: CICD Workflow
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Concurrency control to implement build queue
+# This ensures:
+# 1. Only one workflow runs at a time for the same PR or branch
+# 2. For main branch: new pushes are queued (not canceled)
+# 3. For PRs: new pushes cancel previous runs to save resources
+# 4. Different PRs can run in parallel
+concurrency:
+  # For main branch: queue builds but don't cancel in-progress ones
+  # For PRs: cancel previous builds for the same PR
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+
+jobs:
+  actionlint:
+    name: Action Lint
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Stay on a branch ref (not detached HEAD on github.sha) so the
+          # subsequent Tagging step's `git push --follow-tags` has a real
+          # upstream to push to.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
+        with:
+          reporter: github-check
+          fail_level: error
+          actionlint_flags: -shellcheck=shellcheck
+
+  yamllint:
+    name: Yaml Lint
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Stay on a branch ref (not detached HEAD on github.sha) so the
+          # subsequent Tagging step's `git push --follow-tags` has a real
+          # upstream to push to.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install yamllint
+        run: pip install --upgrade yamllint
+
+      - name: Run yamllint
+        run: yamllint .
+
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      # --- ADD THIS STEP TO CACHE BUN DEPENDENCIES ---
+      - name: Cache Bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          # Generate a cache key based on package.json and your Bun lockfile (bun.lock / bun.lockb)
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock', '**/bun.lockb', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run markdownlint
+        run: bunx markdownlint-cli2
+
+  action-docs-check:
+    name: Action Docs Check
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Stay on a branch ref (not detached HEAD on github.sha) so the
+          # subsequent Tagging step's `git push --follow-tags` has a real
+          # upstream to push to.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Check action README's are in sync with action.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mapfile -t actions < <(find "$(pwd)" -mindepth 2 -maxdepth 2 -name action.yml)
+          if (( ${#actions[@]} == 0 )); then
+            echo "No actions present; action-docs check is a no-op."
+            exit 0
+          fi
+          fail=0
+          for f in "${actions[@]}"; do
+            dir="$(dirname "$f")"
+            echo "::group::Checking $dir"
+            if [[ ! -f "$dir/README.md" ]]; then
+              echo "::error file=$f::Missing README.md for $dir. Create it with action-docs markers, then run: npx action-docs --update-readme --source $f"
+              fail=1
+              echo "::endgroup::"
+              continue
+            fi
+            cp "$dir/README.md" "$dir/README.md.bak"
+            if ! npx --yes action-docs@^2 --no-banner --source "$f" --update-readme; then
+              echo "::error file=$f::action-docs failed to process $f"
+              mv "$dir/README.md.bak" "$dir/README.md"
+              fail=1
+              echo "::endgroup::"
+              continue
+            fi
+            if ! diff -q "$dir/README.md" "$dir/README.md.bak" >/dev/null; then
+              echo "::error file=$dir/README.md::README.md is out of sync with action.yml. Run: npx action-docs --update-readme --source $f"
+              diff -u "$dir/README.md.bak" "$dir/README.md" || true
+              fail=1
+            fi
+            mv "$dir/README.md.bak" "$dir/README.md"
+            echo "::endgroup::"
+          done
+          exit "$fail"
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Stay on a branch ref (not detached HEAD on github.sha) so the
+          # subsequent Tagging step's `git push --follow-tags` has a real
+          # upstream to push to.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run gitleaks
+        uses: elioetibr/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Org-level license secret (visibility: all). Required by
+          # gitleaks-action@v2 for organization-owned repos.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  all-green:
+    name: All Green
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    needs: [actionlint, yamllint, markdownlint, action-docs-check, gitleaks]
+    if: always()
+    steps:
+      - name: Verify all required checks passed
+        shell: bash -l {0}
+        run: |
+          #!/usr/bin/env bash
+
+          set -euo pipefail
+
+          results='${{ toJSON(needs) }}'
+          echo "$results"
+          if echo "$results" | grep -Eq '"result":\s*"(failure|cancelled)"'; then
+            echo "::error::One or more required checks failed or were cancelled."
+            exit 1
+          fi
+          echo "All required checks passed."
+
+  build:
+    name: Build
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    needs:
+      [
+        actionlint,
+        yamllint,
+        markdownlint,
+        action-docs-check,
+        gitleaks,
+        all-green,
+      ]
+    # Skip when the previous commit was the auto-release CHANGELOG bump.
+    # Belt-and-braces: the commit also carries `[skip ci]` which GitHub
+    # Actions itself honors, so this is defense-in-depth.
+    if: ${{
+      always() &&
+      needs.all-green.result == 'success' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):') ||
+      !contains(github.event.head_commit.message, 'ci skip') ||
+      !contains(github.event.head_commit.message, '[ci skip]') ||
+      !contains(github.event.head_commit.message, 'skip ci') ||
+      !contains(github.event.head_commit.message, '[skip ci]')
+      }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Cache GitVersion tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /opt/hostedtoolcache/GitVersion.Tool
+            ~/.dotnet/tools
+          key: ${{ runner.os }}-${{ runner.arch }}-gitversion-${{ vars.GITVERSION_SPEC || '6.x' }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-gitversion-
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: ${{ vars.GITVERSION_SPEC || '6.x' }}
+
+      - name: Calculate Semantic Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run linter
+        run: bun run lint
+
+      - name: Run type check
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun run test:coverage
+
+      - name: Build
+        run: bun run build
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_ORG_TOKEN }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ${{ github.repository }}
+          files: ./coverage/lcov.info
+          flags: unit
+          plugins: noop
+          disable_search: true
+          fail_ci_if_error: false
+
+      # Auto-commit dist/ and version bump on push to main
+      - name: Commit dist/ and version
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        env:
+          SEMVER: ${{ steps.gitversion.outputs.SemVer }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          npm version "$SEMVER" --no-git-tag-version --allow-same-version
+          git add dist/ package.json
+          git diff --staged --quiet || git commit -m "chore(release): v${SEMVER} [skip ci]" && git push
+
+  release:
+    name: Release
+    runs-on: ${{ vars.RUNS_ON_ARM64 || vars.RUNS_ON || 'ubuntu-latest' }}
+    needs: [build]
+    if: success() && github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          token: ${{ github.token }}
+          fetch-depth: "0"
+          fetch-tags: "true"
+
+      - name: Cache GitVersion tool
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /opt/hostedtoolcache/GitVersion.Tool
+            ~/.dotnet/tools
+          key: ${{ runner.os }}-${{ runner.arch }}-gitversion-${{ vars.GITVERSION_SPEC || '6.x' }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-gitversion-
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: ${{ vars.GITVERSION_SPEC || '6.x' }}
+          preferLatestVersion: true
+
+      - name: Calculate Semantic Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        uses: kenji-miyake/setup-git-cliff@2778609c643a39a2576c4bae2e493b855eb4aee8 # v2.0.1
+
+      - name: Generate changelog
+        id: changelog
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ steps.gitversion.outputs.SemVer }}
+        run: |
+          # Get the previous release tag for changelog generation.
+          # Do NOT use `git describe --tags` — floating tags (v1, v1.1) and
+          # pre-release tags (v1.1.1-2) from prior runs pollute the result.
+          # Instead, query the latest GitHub Release which represents the
+          # actual last published version.
+          PREVIOUS_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Generating changelog from $PREVIOUS_TAG to HEAD"
+            git cliff "$PREVIOUS_TAG"..HEAD --tag "$VERSION" -o CHANGELOG.md
+          else
+            echo "No previous tag found, generating full changelog"
+            git cliff --tag "$VERSION" -o CHANGELOG.md
+          fi
+
+          # Also generate release notes (just the latest version)
+          if [ -n "$PREVIOUS_TAG" ]; then
+            git cliff "$PREVIOUS_TAG"..HEAD --tag "$VERSION" --strip header -o RELEASE_NOTES.md
+          else
+            git cliff --tag "$VERSION" --strip all -o RELEASE_NOTES.md
+          fi
+
+          echo "Release notes:"
+          cat RELEASE_NOTES.md
+
+      - name: Tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEMVER: v${{ steps.gitversion.outputs.SemVer }}
+          FULL_VERSION: v${{ steps.gitversion.outputs.MajorMinorPatch }}
+          MAJOR_MINOR_VERSION: v${{ steps.gitversion.outputs.Major }}.${{ steps.gitversion.outputs.Minor }}
+          MAJOR_VERSION: v${{ steps.gitversion.outputs.Major }}
+        run: |
+          function tag() {
+            VERSION=$1
+            echo "Releasing Version: ${VERSION}"
+
+            # Delete remote tag and associated release if they exist
+            # Use refs/tags/ prefix to avoid ambiguity with branches of the same name
+            if git ls-remote --tags origin | grep -q "refs/tags/${VERSION}$"; then
+              if gh release view "${VERSION}" &>/dev/null; then
+                gh release delete --yes "${VERSION}"
+              fi
+              git push origin --delete "refs/tags/${VERSION}"
+            fi
+
+            # Delete local tag if it exists
+            git tag -d "${VERSION}" 2>/dev/null || true
+
+            # Create and push only this specific tag
+            git tag -a "${VERSION}" -m "chore: Release Version ${VERSION}"
+            git push origin "refs/tags/${VERSION}"
+          }
+
+          # Create semver tag (v1.2.3(.-alpha.1)*)
+          tag "$SEMVER"
+
+          if [[ "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]];
+          then
+            # Create full version tag (v1.2.3)
+            tag "$FULL_VERSION"
+
+            # Create/update major.minor tag (v1.2)
+            tag "$MAJOR_MINOR_VERSION"
+
+            # Create/update major tag (v1)
+            tag "$MAJOR_VERSION"
+          fi
+
+      - name: Update floating branches
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          MAJOR: v${{ steps.gitversion.outputs.Major }}
+          MAJOR_MINOR: v${{ steps.gitversion.outputs.Major }}.${{ steps.gitversion.outputs.Minor }}
+          FULL_VERSION: v${{ steps.gitversion.outputs.MajorMinorPatch }}
+          SEMVER: v${{ steps.gitversion.outputs.SemVer }}
+        run: |
+          # Update full version branch (v1.0.0-1 -> latest vx.x.x-{totalCommits})
+          git push origin HEAD:refs/heads/"$SEMVER" --force
+
+          # Update full version branch (v1.0.0 -> latest vx.x.x)
+          git push origin HEAD:refs/heads/"$FULL_VERSION" --force
+
+          # Update major.minor branch (v1.2 -> latest v1.2.x)
+          git push origin HEAD:refs/heads/"$MAJOR_MINOR" --force
+
+          # Update major branch (v1 -> latest v1.x.x)
+          git push origin HEAD:refs/heads/"$MAJOR" --force
+
+      - name: Release
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEMVER: v${{ steps.gitversion.outputs.SemVer }}
+        run: |
+          # Clean up any draft releases
+          gh release list | grep Draft | awk '{print $1}' | while read -r draft; do
+            echo "Removing Draft Release: ${draft}"
+            gh release delete --yes "${draft}"
+          done
+
+          # Create the release with conventional commits changelog
+          gh release create "$SEMVER" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag \
+            --latest

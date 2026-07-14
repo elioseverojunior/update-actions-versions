@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+# Uncomment if/when GitHub Discussions are enabled:
+# contact_links:
+#   - name: Discussions
+#     url: https://github.com/elioetibr/composite-actions/discussions
+#     about: Ask a question or share an idea.

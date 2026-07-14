@@ -1,0 +1,70 @@
+# lefthook ~ https://lefthook.dev
+#
+# Pre-commit hooks for update-actions-versions (TypeScript/Node.js project)
+# Run `lefthook install` (or `mise run hooks-install`) once to wire the git hooks.
+# Mise owns the tooling (lefthook, ESLint, Prettier, TypeScript, Bun) so every
+# contributor and CI runner behaves identically.
+
+# Fail fast if a contributor committed without installing the hooks.
+assert_lefthook_installed: true
+
+pre-commit:
+  # Don't lint while a merge or rebase is in progress.
+  skip:
+    - merge
+    - rebase
+  # Run jobs sequentially, stopping at the first failure. File hygiene fixers
+  # run (and re-stage) before the readers below see the files.
+  piped: true
+  jobs:
+    - name: test
+      run: mise run test
+
+    - name: file-hygiene
+      # Replacement for pre-commit/pre-commit-hooks via mise task.
+      # Handles: large-file, merge-conflict, case-conflict, symlink, executable-shebang,
+      # TOML/JSON checks, trailing-whitespace / end-of-file / mixed-line-ending FIXERS.
+      # Applied in place and re-staged.
+      run: mise run hygiene-fix {staged_files}
+      stage_fixed: true
+
+    - name: prettier
+      # Format staged TypeScript/JS/JSON/YAML/TOML/Markdown files with Prettier.
+      # Auto-fixes and re-stages. Config in .prettierrc.
+      glob: "*.{ts,js,json,yml,yaml,toml,md}"
+      run: mise run prettier:format:fix {staged_files}
+      stage_fixed: true
+
+    - name: eslint
+      # Lint staged TypeScript/JS files with ESLint (zero warnings allowed).
+      # Fixes auto-fixable issues and re-stages.
+      glob: "*.{ts,js}"
+      run: mise run eslint:lint:fix {staged_files}
+      stage_fixed: true
+
+    - name: typecheck
+      # Type-check staged TypeScript files.
+      glob: "*.ts"
+      run: mise run typecheck {staged_files}
+
+    - name: build
+      # Verify both CLI and GitHub Action bundles build successfully.
+      run: mise run build
+
+commit-msg:
+  # Don't lint generated/auto messages produced during a merge or rebase.
+  skip:
+    - merge
+    - rebase
+  jobs:
+    - name: commitlint
+      # Validate the in-progress commit message against conventional commits.
+      # {1} is the path to the message file git passes to the commit-msg hook.
+      run: mise run commitlint {1}
+
+post-commit:
+  # Never rewrite commits while a merge or rebase is in progress.
+  skip:
+    - merge
+    - rebase
+  jobs: []

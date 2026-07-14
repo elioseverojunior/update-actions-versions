@@ -1,0 +1,13 @@
+{
+  "$schema": "https://stryker-mutator.io/schema/stryker-schema.json",
+  "testRunner": "bun",
+  "plugins": ["stryker-mutator-bun-runner"],
+  "mutate": ["src/**/*.ts", "!src/**/*.test.ts", "!src/**/__tests__/**"],
+  "reporters": ["html", "clear-text", "progress"],
+  "concurrency": 4,
+  "coverageAnalysis": "perTest",
+  "bun": {
+    "command": "/usr/local/bin/bun",
+    "testFiles": ["src/**/*.test.ts"]
+  }
+}

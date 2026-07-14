@@ -1,0 +1,28 @@
+# Auto-generated lockfiles
+bun.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build / test outputs
+dist/
+coverage/
+node_modules/
+*.tsbuildinfo
+
+# Files Prettier has no parser for (no plugin loaded)
+.editorconfig
+.gitignore
+.gitattributes
+.nvmrc
+.npmrc
+.prettierignore
+bunfig.toml
+*.toml
+
+# Changeset internal cache (the .md changeset entries are still formatted)
+.changeset/.cache/
+
+# Stryker sandbox + report directories — generated, never committed.
+.stryker-tmp/
+reports/mutation/

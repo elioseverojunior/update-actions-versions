@@ -1,0 +1,24 @@
+# update-actions-versions.yaml
+# Configuration for update-actions-versions
+
+# Repositories that only use branch-based refs (no version tags)
+# These will be pinned to the latest commit of the specified branch
+branchOnlyRepos:
+  "dtolnay/rust-toolchain":
+    - "stable"
+    - "nightly"
+
+# Override the branch to use for specific repositories
+branchOverrides:
+  "nightly": "nightly"
+
+# Override the ref (tag/branch) to use for specific repositories
+refOverrides:
+  "github/codeql-action": "v3"
+
+# Reusable workflow paths that should be checked
+reusablePaths:
+  - "slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml"
+
+# Maximum concurrent API requests to GitHub
+maxConcurrentApi: 10

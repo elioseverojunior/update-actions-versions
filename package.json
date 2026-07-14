@@ -1,0 +1,75 @@
+{
+  "name": "update-actions-versions",
+  "version": "1.0.0",
+  "description": "Update GitHub Action Version to use pins to latest release SHAs",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "update-actions-versions": "./dist/cli-entry.js"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "bun": ">=1.3.0",
+    "typescript": ">=6,<7"
+  },
+  "scripts": {
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "build": "bun run build:cli && bun run build:action",
+    "build:cli": "bun build src/cli-entry.ts --outdir dist --target node --external none",
+    "build:action": "bun build src/cli.ts --outdir dist/action --target node --external none --outfile index.js",
+    "lint": "bun run --filter '*' lint",
+    "release": "changeset publish",
+    "version": "changeset version",
+    "deps": "bunx --bun npm-check-updates -u --target minor && bun install",
+    "deps:check": "bunx --bun npm-check-updates --target minor",
+    "deps:latest": "bunx --bun npm-check-updates -u --target latest && bun install",
+    "prettier:format": "prettier --check .",
+    "prettier:format:fix": "prettier --write .",
+    "eslint:lint": "eslint --max-warnings 0 .",
+    "eslint:lint:fix": "eslint --fix --max-warnings 0 .",
+    "fix:all": "bun run eslint:lint:fix && bun run prettier:format:fix",
+    "config:sync:check": "bun scripts/check-config-sync.ts",
+    "typecheck": "tsc -p tsconfig*.json --noEmit",
+    "typecheck:watch": "tsc -p tsconfig*.json --noEmit --watch",
+    "test:mutation": "stryker run"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@eslint/js": "^10.0.1",
+    "@github/markdownlint-github": "^0.8.3",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/typescript-checker": "^9.6.1",
+    "@types/bun": "^1.3.14",
+    "@types/node": "^26.1.1",
+    "@typescript-eslint/eslint-plugin": "^8.64.0",
+    "@typescript-eslint/parser": "^8.64.0",
+    "@vercel/ncc": "^0.44.1",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-prettier": "^5.5.6",
+    "globals": "^17.7.0",
+    "markdown-it": "^14.3.0",
+    "markdownlint-cli2": "^0.23.0",
+    "prettier": "^3.9.5",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "stryker-mutator-bun-runner": "^0.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "typescript": ">=6,<7"
+  },
+  "trustedDependencies": [
+    "unrs-resolver"
+  ],
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "commander": "^15.0.0",
+    "yaml": "^2.9.0"
+  }
+}

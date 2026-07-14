@@ -1,0 +1,15 @@
+{
+  "branchOnlyRepos": {
+    "dtolnay/rust-toolchain": ["stable", "nightly"]
+  },
+  "branchOverrides": {
+    "nightly": "nightly"
+  },
+  "refOverrides": {
+    "github/codeql-action": "v3"
+  },
+  "reusablePaths": [
+    "slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml"
+  ],
+  "maxConcurrentApi": 10
+}

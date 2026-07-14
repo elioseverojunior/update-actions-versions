@@ -1,0 +1,63 @@
+name: "Update Action Pins"
+description: "Update SHA pins for GitHub Actions to latest releases within the same major version"
+author: "elio"
+
+inputs:
+  token:
+    description: "GitHub token for API access (GITHUB_TOKEN or GH_TOKEN)"
+    required: false
+    default: ${{ github.token }}
+
+  write:
+    description: "Write changes to workflow files"
+    required: false
+    default: "false"
+
+  apply-major:
+    description: "Apply major version bumps (default: report only)"
+    required: false
+    default: "false"
+
+  config:
+    description: "Path to config file (JSON/YAML/TOML)"
+    required: false
+
+  inline-config:
+    description: "Inline config as JSON or YAML string (merged with file config, takes precedence)"
+    required: false
+
+  verbose:
+    description: "Increase verbosity (repeat for debug)"
+    required: false
+    default: "false"
+
+  quiet:
+    description: "Decrease verbosity (errors only)"
+    required: false
+    default: "false"
+
+outputs:
+  changes:
+    description: "Number of files updated"
+    value: ${{ steps.run.outputs.changes }}
+
+  comments-fixed:
+    description: "Number of tag comments fixed"
+    value: ${{ steps.run.outputs.comments-fixed }}
+
+  major-bumps:
+    description: "Number of major version bumps available"
+    value: ${{ steps.run.outputs.major-bumps }}
+
+  errors:
+    description: "Number of errors encountered"
+    value: ${{ steps.run.outputs.errors }}
+
+runs:
+  using: "node20"
+  main: "dist/action/index.js"
+  post: "dist/action/index.js"
+
+branding:
+  icon: "lock"
+  color: "blue"
